@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import logging
+import time
 
 import requests
 
 from src.models import Listing
 
 LOGGER = logging.getLogger(__name__)
+
+# Telegram allows roughly one message per second per chat; bursts beyond that get HTTP 429.
+MIN_SECONDS_BETWEEN_MESSAGES = 1.1
 
 
 class TelegramNotifier:
@@ -15,9 +19,10 @@ class TelegramNotifier:
         self.timeout_seconds = timeout_seconds
         self.base_endpoint = f"https://api.telegram.org/bot{bot_token}"
         self.endpoint = f"{self.base_endpoint}/sendMessage"
+        self._last_sent_at = 0.0
 
     def send_new_listing(self, listing: Listing) -> None:
-        message = _format_listing_message(listing)
+        message = format_listing_message(listing)
         self._send_message(message)
 
     def send_healthcheck(self) -> None:
@@ -66,7 +71,12 @@ class TelegramNotifier:
                 "text": message,
                 "disable_web_page_preview": True,
             }
-            response = requests.post(self.endpoint, json=payload, timeout=self.timeout_seconds)
+            response = self._post_throttled(payload)
+            if response.status_code == 429:
+                retry_after = _get_retry_after(response)
+                LOGGER.warning("Telegram rate limit hit, retrying in %ss", retry_after)
+                time.sleep(retry_after)
+                response = self._post_throttled(payload)
             if response.status_code >= 400:
                 LOGGER.error(
                     "Telegram send failed for chat_id=%s status=%s body=%s",
@@ -77,7 +87,24 @@ class TelegramNotifier:
                 response.raise_for_status()
 
 
-def _format_listing_message(listing: Listing) -> str:
+    def _post_throttled(self, payload: dict) -> requests.Response:
+        wait = MIN_SECONDS_BETWEEN_MESSAGES - (time.monotonic() - self._last_sent_at)
+        if wait > 0:
+            time.sleep(wait)
+        response = requests.post(self.endpoint, json=payload, timeout=self.timeout_seconds)
+        self._last_sent_at = time.monotonic()
+        return response
+
+
+def _get_retry_after(response: requests.Response) -> int:
+    try:
+        retry_after = response.json().get("parameters", {}).get("retry_after")
+    except ValueError:
+        retry_after = None
+    return int(retry_after) if isinstance(retry_after, (int, float)) else 5
+
+
+def format_listing_message(listing: Listing) -> str:
     lines = ["🏠 Nouveau logement CROUS détecté", "", f"Titre: {listing.title}"]
     if listing.price_eur is not None:
         lines.append(f"Prix: {listing.price_eur} €")

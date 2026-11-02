@@ -57,6 +57,15 @@ Optional:
 - `HEARTBEAT_INTERVAL_HOURS` (default `168`)
 - `ERROR_ALERT_THRESHOLD` (default `3` consecutive failures)
 - `ERROR_ALERT_COOLDOWN_MINUTES` (default `180`)
+- `WHATSAPP_PHONE` + `WHATSAPP_APIKEY` (send listing alerts to WhatsApp too, via [CallMeBot](https://www.callmebot.com/blog/free-api-whatsapp-messages/); set both or neither)
+
+### WhatsApp alerts (optional, CallMeBot)
+
+1. Add the CallMeBot number (listed on callmebot.com) to your contacts.
+2. Send it on WhatsApp: `I allow callmebot to send me messages`.
+3. Put the returned API key in `WHATSAPP_APIKEY` and your number (`+33...`) in `WHATSAPP_PHONE`.
+
+New listings and healthchecks are then sent to both Telegram and WhatsApp. Telegram commands (filters) stay Telegram-only. WhatsApp failures are logged but never block Telegram alerts.
 
 ## Run
 
@@ -90,6 +99,7 @@ GitHub Actions can run this monitor every 5 minutes (GitHub minimum schedule gra
 	- `TELEGRAM_BOT_TOKEN`
 	- `TELEGRAM_CHAT_ID`
 	- `TELEGRAM_CHAT_IDS` (optional, comma-separated multi-recipient mode)
+	- `WHATSAPP_PHONE` / `WHATSAPP_APIKEY` (optional, CallMeBot WhatsApp alerts)
 4. Enable the workflow in **Actions** tab (`CROUS Monitor`).
 5. Optional: trigger manually with **Run workflow**.
 	- Set `test_telegram=true` to send one healthcheck Telegram message immediately.
@@ -125,7 +135,7 @@ The next scheduled run applies them and confirms back in Telegram.
 
 Multi-location example for `CROUS_SEARCH_URLS`:
 
-`https://trouverunlogement.lescrous.fr/tools/42/search?bounds=...,https://trouverunlogement.lescrous.fr/tools/42/search?bounds=...`
+`https://trouverunlogement.lescrous.fr/tools/47/search?bounds=...,https://trouverunlogement.lescrous.fr/tools/47/search?bounds=...`
 
 Multi-recipient example for `TELEGRAM_CHAT_IDS`:
 

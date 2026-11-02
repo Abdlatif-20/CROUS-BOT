@@ -13,6 +13,7 @@ from src.crous_client import CrousClient
 from src.models import Listing
 from src.state_store import StateStore
 from src.telegram_notifier import TelegramNotifier
+from src.whatsapp_notifier import WhatsAppNotifier
 
 LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +32,13 @@ class MonitorService:
             chat_ids=settings.telegram_chat_ids,
             timeout_seconds=settings.http_timeout_seconds,
         )
+        self.whatsapp: WhatsAppNotifier | None = None
+        if settings.whatsapp_phone and settings.whatsapp_apikey:
+            self.whatsapp = WhatsAppNotifier(
+                phone=settings.whatsapp_phone,
+                apikey=settings.whatsapp_apikey,
+                timeout_seconds=settings.http_timeout_seconds,
+            )
 
     def poll_once(self, dry_run: bool = False) -> tuple[int, int]:
         listings: list[Listing] = []
@@ -53,6 +61,7 @@ class MonitorService:
         for listing in new_listings:
             self.notifier.send_new_listing(listing)
             LOGGER.info("Sent Telegram alert for: %s", listing.url)
+            self._send_whatsapp_listing(listing)
 
         return len(filtered_listings), len(new_listings)
 
@@ -100,6 +109,9 @@ class MonitorService:
             return
         self.notifier.send_healthcheck()
         LOGGER.info("Sent Telegram healthcheck message")
+        if self.whatsapp is not None:
+            self.whatsapp.send_healthcheck()
+            LOGGER.info("Sent WhatsApp healthcheck message")
 
     def maybe_send_scheduled_heartbeat(self, dry_run: bool = False) -> bool:
         if not self.settings.heartbeat_enabled:
@@ -160,6 +172,16 @@ class MonitorService:
             )
             LOGGER.debug("Sleeping for %ss before next poll", sleep_seconds)
             time.sleep(sleep_seconds)
+
+    def _send_whatsapp_listing(self, listing: Listing) -> None:
+        if self.whatsapp is None:
+            return
+        # WhatsApp is best-effort: the listing is already marked seen and alerted on Telegram.
+        try:
+            self.whatsapp.send_new_listing(listing)
+            LOGGER.info("Sent WhatsApp alert for: %s", listing.url)
+        except Exception:
+            LOGGER.exception("WhatsApp alert failed for: %s", listing.url)
 
     def _apply_filters(self, listings: Iterable[Listing]) -> list[Listing]:
         output: list[Listing] = []
