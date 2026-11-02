@@ -25,8 +25,7 @@ class Settings:
     heartbeat_interval_hours: int
     error_alert_threshold: int
     error_alert_cooldown_minutes: int
-    whatsapp_phone: str | None
-    whatsapp_apikey: str | None
+    discord_webhook_url: str | None
 
 
 def _get_int(name: str, default: int, minimum: int) -> int:
@@ -90,17 +89,8 @@ def _get_keywords(name: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(keywords))
 
 
-def _get_whatsapp() -> tuple[str | None, str | None]:
-    phone = os.getenv("WHATSAPP_PHONE", "").strip()
-    apikey = os.getenv("WHATSAPP_APIKEY", "").strip()
-    if bool(phone) != bool(apikey):
-        raise ValueError("WHATSAPP_PHONE and WHATSAPP_APIKEY must be set together")
-    return (phone or None, apikey or None)
-
-
 def load_settings() -> Settings:
     load_dotenv()
-    whatsapp_phone, whatsapp_apikey = _get_whatsapp()
 
     return Settings(
         crous_search_urls=_get_search_urls(),
@@ -124,6 +114,5 @@ def load_settings() -> Settings:
         error_alert_cooldown_minutes=_get_int(
             "ERROR_ALERT_COOLDOWN_MINUTES", default=180, minimum=1
         ),
-        whatsapp_phone=whatsapp_phone,
-        whatsapp_apikey=whatsapp_apikey,
+        discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", "").strip() or None,
     )

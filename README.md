@@ -58,15 +58,15 @@ Optional:
 - `HEARTBEAT_INTERVAL_HOURS` (default `168`)
 - `ERROR_ALERT_THRESHOLD` (default `3` consecutive failures)
 - `ERROR_ALERT_COOLDOWN_MINUTES` (default `180`)
-- `WHATSAPP_PHONE` + `WHATSAPP_APIKEY` (send listing alerts to WhatsApp too, via [CallMeBot](https://www.callmebot.com/blog/free-api-whatsapp-messages/); set both or neither)
+- `DISCORD_WEBHOOK_URL` (also send listing alerts to a Discord channel)
 
-### WhatsApp alerts (optional, CallMeBot)
+### Discord alerts (optional)
 
-1. Add the CallMeBot number (listed on callmebot.com) to your contacts.
-2. Send it on WhatsApp: `I allow callmebot to send me messages`.
-3. Put the returned API key in `WHATSAPP_APIKEY` and your number (`+33...`) in `WHATSAPP_PHONE`.
+1. In your Discord server, open the channel settings → **Integrations** → **Webhooks** → **New Webhook**.
+2. Name it (e.g. `CROUS Alerts`), click **Copy Webhook URL**.
+3. Put it in `DISCORD_WEBHOOK_URL`.
 
-New listings and healthchecks are then sent to both Telegram and WhatsApp. Telegram commands (filters) stay Telegram-only. WhatsApp failures are logged but never block Telegram alerts.
+New listings and healthchecks are then sent to both Telegram and Discord. Telegram commands (filters) stay Telegram-only. Discord failures are logged but never block Telegram alerts.
 
 ## Run
 
@@ -100,7 +100,7 @@ GitHub Actions can run this monitor every 5 minutes (GitHub minimum schedule gra
 	- `TELEGRAM_BOT_TOKEN`
 	- `TELEGRAM_CHAT_ID`
 	- `TELEGRAM_CHAT_IDS` (optional, comma-separated multi-recipient mode)
-	- `WHATSAPP_PHONE` / `WHATSAPP_APIKEY` (optional, CallMeBot WhatsApp alerts)
+	- `DISCORD_WEBHOOK_URL` (optional, Discord channel alerts)
 4. Enable the workflow in **Actions** tab (`CROUS Monitor`).
 5. Optional: trigger manually with **Run workflow**.
 	- Set `test_telegram=true` to send one healthcheck Telegram message immediately.

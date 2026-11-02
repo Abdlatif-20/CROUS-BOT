@@ -10,11 +10,11 @@ from requests import RequestException
 
 from src.config import Settings
 from src.crous_client import CrousClient
+from src.discord_notifier import DiscordNotifier
 from src.geo_filter import IdfDistanceFilter
 from src.models import Listing
 from src.state_store import StateStore
 from src.telegram_notifier import TelegramNotifier
-from src.whatsapp_notifier import WhatsAppNotifier
 
 LOGGER = logging.getLogger(__name__)
 
@@ -40,11 +40,10 @@ class MonitorService:
                 state_store=self.state_store,
                 timeout_seconds=settings.http_timeout_seconds,
             )
-        self.whatsapp: WhatsAppNotifier | None = None
-        if settings.whatsapp_phone and settings.whatsapp_apikey:
-            self.whatsapp = WhatsAppNotifier(
-                phone=settings.whatsapp_phone,
-                apikey=settings.whatsapp_apikey,
+        self.discord: DiscordNotifier | None = None
+        if settings.discord_webhook_url:
+            self.discord = DiscordNotifier(
+                webhook_url=settings.discord_webhook_url,
                 timeout_seconds=settings.http_timeout_seconds,
             )
 
@@ -69,7 +68,7 @@ class MonitorService:
         for listing in new_listings:
             self.notifier.send_new_listing(listing)
             LOGGER.info("Sent Telegram alert for: %s", listing.url)
-            self._send_whatsapp_listing(listing)
+            self._send_discord_listing(listing)
 
         return len(filtered_listings), len(new_listings)
 
@@ -117,9 +116,9 @@ class MonitorService:
             return
         self.notifier.send_healthcheck()
         LOGGER.info("Sent Telegram healthcheck message")
-        if self.whatsapp is not None:
-            self.whatsapp.send_healthcheck()
-            LOGGER.info("Sent WhatsApp healthcheck message")
+        if self.discord is not None:
+            self.discord.send_healthcheck()
+            LOGGER.info("Sent Discord healthcheck message")
 
     def maybe_send_scheduled_heartbeat(self, dry_run: bool = False) -> bool:
         if not self.settings.heartbeat_enabled:
@@ -181,15 +180,15 @@ class MonitorService:
             LOGGER.debug("Sleeping for %ss before next poll", sleep_seconds)
             time.sleep(sleep_seconds)
 
-    def _send_whatsapp_listing(self, listing: Listing) -> None:
-        if self.whatsapp is None:
+    def _send_discord_listing(self, listing: Listing) -> None:
+        if self.discord is None:
             return
-        # WhatsApp is best-effort: the listing is already marked seen and alerted on Telegram.
+        # Discord is best-effort: the listing is already marked seen and alerted on Telegram.
         try:
-            self.whatsapp.send_new_listing(listing)
-            LOGGER.info("Sent WhatsApp alert for: %s", listing.url)
+            self.discord.send_new_listing(listing)
+            LOGGER.info("Sent Discord alert for: %s", listing.url)
         except Exception:
-            LOGGER.exception("WhatsApp alert failed for: %s", listing.url)
+            LOGGER.exception("Discord alert failed for: %s", listing.url)
 
     def _apply_filters(self, listings: Iterable[Listing]) -> list[Listing]:
         output: list[Listing] = []
