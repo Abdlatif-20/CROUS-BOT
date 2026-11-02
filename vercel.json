@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["cdg1"],
+  "functions": {
+    "api/check.py": {
+      "maxDuration": 120,
+      "includeFiles": "src/**"
+    }
+  }
+}

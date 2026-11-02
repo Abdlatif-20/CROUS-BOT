@@ -13,7 +13,7 @@ from src.crous_client import CrousClient
 from src.discord_notifier import DiscordNotifier
 from src.geo_filter import IdfDistanceFilter
 from src.models import Listing
-from src.state_store import StateStore
+from src.state_store import create_state_store
 from src.telegram_notifier import TelegramNotifier
 
 LOGGER = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ class MonitorService:
             max_retries=settings.http_max_retries,
             user_agent=settings.user_agent,
         )
-        self.state_store = StateStore(settings.state_db_path)
+        self.state_store = create_state_store(settings.state_db_path, settings.http_timeout_seconds)
         self.notifier = TelegramNotifier(
             bot_token=settings.telegram_bot_token,
             chat_ids=settings.telegram_chat_ids,
@@ -150,6 +150,20 @@ class MonitorService:
             return
         self.notifier.send_error_alert(failure_count=failure_count, error_text=str(error))
         LOGGER.warning("Sent repeated-failure alert (consecutive_failures=%s)", failure_count)
+
+    def run_cycle(self, dry_run: bool = False, test_telegram: bool = False) -> tuple[int, int]:
+        """One full check, as used by --once, GitHub Actions and the Vercel endpoint."""
+        try:
+            self.sync_telegram_commands(dry_run=dry_run)
+            if test_telegram:
+                self.send_healthcheck(dry_run=dry_run)
+            self.maybe_send_scheduled_heartbeat(dry_run=dry_run)
+            total, new = self.poll_once(dry_run=dry_run)
+            self.register_success()
+            return total, new
+        except Exception as exc:
+            self.handle_failure(exc, dry_run=dry_run)
+            raise
 
     def run_forever(self, dry_run: bool = False) -> None:
         failure_count = 0

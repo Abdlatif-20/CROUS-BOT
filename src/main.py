@@ -34,17 +34,8 @@ def main() -> None:
     service = MonitorService(settings)
 
     if args.once:
-        try:
-            service.sync_telegram_commands(dry_run=args.dry_run)
-            if args.test_telegram:
-                service.send_healthcheck(dry_run=args.dry_run)
-            service.maybe_send_scheduled_heartbeat(dry_run=args.dry_run)
-            total, new = service.poll_once(dry_run=args.dry_run)
-            service.register_success()
-            logging.getLogger(__name__).info("One-shot done: total=%s new=%s", total, new)
-        except Exception as exc:
-            service.handle_failure(exc, dry_run=args.dry_run)
-            raise
+        total, new = service.run_cycle(dry_run=args.dry_run, test_telegram=args.test_telegram)
+        logging.getLogger(__name__).info("One-shot done: total=%s new=%s", total, new)
         return
 
     service.run_forever(dry_run=args.dry_run)

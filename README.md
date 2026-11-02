@@ -88,6 +88,26 @@ Continuous monitor:
 python -m src.main
 ```
 
+## Run 24/7 on Vercel (free) + cron-job.org
+
+Vercel hosts one endpoint, `api/check.py`, that runs a single check per request. Vercel's own
+cron runs at most once a day on the Hobby plan, so a free external scheduler (cron-job.org)
+calls the endpoint every few minutes instead. Serverless functions have no persistent disk, so
+dedup state lives in Upstash Redis (free tier, via the Vercel Marketplace).
+
+1. `vercel login`, then `vercel link` in the repo.
+2. `vercel integration add upstash/upstash-kv --meta primaryRegion=fra1 -e production`
+   (sets `KV_REST_API_URL` / `KV_REST_API_TOKEN`; the bot switches to Redis when they exist).
+3. Add production env vars with `vercel env add <NAME> production`: `TELEGRAM_BOT_TOKEN`,
+   `TELEGRAM_CHAT_ID`, `CROUS_SEARCH_URL`, optional `DISCORD_WEBHOOK_URL`,
+   `FILTER_IDF_MAX_DISTANCE_KM`, and a random `CRON_SECRET`.
+4. `vercel deploy --prod`.
+5. On cron-job.org, create a job calling `https://<your-project>.vercel.app/api/check?key=<CRON_SECRET>`
+   every 2 minutes. Add `&test=1` once to send a healthcheck.
+
+The endpoint returns `401` without the right key, and `{"ok": true, "total": N, "new": M}` on success.
+Dependencies for Vercel come from `pyproject.toml` (keep it in sync with `requirements.txt`).
+
 ## Run 24/7 with GitHub Actions
 
 GitHub Actions can run this monitor every 5 minutes (GitHub minimum schedule granularity).
