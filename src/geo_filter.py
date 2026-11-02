@@ -52,6 +52,39 @@ def distance_to_idf_km(lon: float, lat: float) -> float:
     return 0.0 if inside else best
 
 
+def distance_between_km(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Straight-line distance in km between two (lon, lat) points in or near Île-de-France."""
+    return math.hypot((a[0] - b[0]) * KM_PER_DEG_LON, (a[1] - b[1]) * KM_PER_DEG_LAT)
+
+
+def geocode(address: str, state_store: StateStore, timeout_seconds: int) -> tuple[float, float] | None:
+    """Return (lon, lat) for an address via api-adresse.data.gouv.fr, cached in SQLite meta."""
+    # Cached: filtered-out listings are re-checked on every poll.
+    cache_key = f"geocode:{address.lower()}"
+    cached = state_store.get_meta(cache_key)
+    if cached:
+        lon, lat = cached.split(",")
+        return float(lon), float(lat)
+
+    try:
+        response = requests.get(
+            GEOCODER_ENDPOINT,
+            params={"q": address, "limit": 1},
+            timeout=timeout_seconds,
+        )
+        response.raise_for_status()
+        features = response.json().get("features") or []
+    except (requests.RequestException, ValueError) as exc:
+        LOGGER.warning("Geocoding failed for %s: %s", address, exc)
+        return None
+
+    if not features:
+        return None
+    lon, lat = features[0]["geometry"]["coordinates"]
+    state_store.set_meta(cache_key, f"{lon},{lat}")
+    return float(lon), float(lat)
+
+
 class IdfDistanceFilter:
     def __init__(self, max_distance_km: int, state_store: StateStore, timeout_seconds: int) -> None:
         self.max_distance_km = max_distance_km
@@ -68,10 +101,10 @@ class IdfDistanceFilter:
             if department not in NEIGHBOUR_DEPARTMENTS:
                 return False
 
-        coordinates = self._geocode(address)
+        coordinates = geocode(address, self.state_store, self.timeout_seconds)
         if coordinates is None and postcode:
             town = CEDEX_REGEX.sub("", postcode.group(3))
-            coordinates = self._geocode(f"{postcode.group(1)} {town}")
+            coordinates = geocode(f"{postcode.group(1)} {town}", self.state_store, self.timeout_seconds)
         if coordinates is None:
             # Fail open: a missed alert costs more than an extra one.
             LOGGER.warning("Could not locate listing, keeping it: %s | %s", listing.title, address)
@@ -80,29 +113,3 @@ class IdfDistanceFilter:
         distance = distance_to_idf_km(*coordinates)
         LOGGER.debug("%s is %.1f km from Île-de-France", listing.title, distance)
         return distance <= self.max_distance_km
-
-    def _geocode(self, address: str) -> tuple[float, float] | None:
-        # Cached in SQLite: filtered-out listings are re-checked on every poll.
-        cache_key = f"geocode:{address.lower()}"
-        cached = self.state_store.get_meta(cache_key)
-        if cached:
-            lon, lat = cached.split(",")
-            return float(lon), float(lat)
-
-        try:
-            response = requests.get(
-                GEOCODER_ENDPOINT,
-                params={"q": address, "limit": 1},
-                timeout=self.timeout_seconds,
-            )
-            response.raise_for_status()
-            features = response.json().get("features") or []
-        except (requests.RequestException, ValueError) as exc:
-            LOGGER.warning("Geocoding failed for %s: %s", address, exc)
-            return None
-
-        if not features:
-            return None
-        lon, lat = features[0]["geometry"]["coordinates"]
-        self.state_store.set_meta(cache_key, f"{lon},{lat}")
-        return float(lon), float(lat)

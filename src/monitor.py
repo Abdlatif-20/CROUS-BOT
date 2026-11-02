@@ -45,6 +45,7 @@ class MonitorService:
             self.discord = DiscordNotifier(
                 webhook_url=settings.discord_webhook_url,
                 timeout_seconds=settings.http_timeout_seconds,
+                state_store=self.state_store,
             )
 
     def poll_once(self, dry_run: bool = False) -> tuple[int, int]:
