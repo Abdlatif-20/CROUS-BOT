@@ -41,6 +41,10 @@ class handler(BaseHTTPRequestHandler):
             return
         self._reply(200, {"ok": True, "total": total, "new": new})
 
+    def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
+        # The default access log prints the full request line, which would leak ?key= into logs.
+        LOGGER.info("%s %s -> %s", self.command, urlparse(self.path).path, code)
+
     def _reply(self, status: int, body: dict) -> None:
         payload = json.dumps(body).encode()
         self.send_response(status)
