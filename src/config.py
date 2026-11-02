@@ -20,6 +20,7 @@ class Settings:
     user_agent: str
     filter_max_price_eur: int | None
     filter_include_keywords: tuple[str, ...]
+    filter_idf_max_distance_km: int | None
     heartbeat_enabled: bool
     heartbeat_interval_hours: int
     error_alert_threshold: int
@@ -116,6 +117,7 @@ def load_settings() -> Settings:
         ).strip(),
         filter_max_price_eur=_get_optional_int("FILTER_MAX_PRICE_EUR"),
         filter_include_keywords=_get_keywords("FILTER_INCLUDE_KEYWORDS"),
+        filter_idf_max_distance_km=_get_optional_int("FILTER_IDF_MAX_DISTANCE_KM"),
         heartbeat_enabled=_get_bool("HEARTBEAT_ENABLED", default=False),
         heartbeat_interval_hours=_get_int("HEARTBEAT_INTERVAL_HOURS", default=168, minimum=1),
         error_alert_threshold=_get_int("ERROR_ALERT_THRESHOLD", default=3, minimum=1),

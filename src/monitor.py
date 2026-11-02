@@ -10,6 +10,7 @@ from requests import RequestException
 
 from src.config import Settings
 from src.crous_client import CrousClient
+from src.geo_filter import IdfDistanceFilter
 from src.models import Listing
 from src.state_store import StateStore
 from src.telegram_notifier import TelegramNotifier
@@ -32,6 +33,13 @@ class MonitorService:
             chat_ids=settings.telegram_chat_ids,
             timeout_seconds=settings.http_timeout_seconds,
         )
+        self.idf_filter: IdfDistanceFilter | None = None
+        if settings.filter_idf_max_distance_km is not None:
+            self.idf_filter = IdfDistanceFilter(
+                max_distance_km=settings.filter_idf_max_distance_km,
+                state_store=self.state_store,
+                timeout_seconds=settings.http_timeout_seconds,
+            )
         self.whatsapp: WhatsAppNotifier | None = None
         if settings.whatsapp_phone and settings.whatsapp_apikey:
             self.whatsapp = WhatsAppNotifier(
@@ -202,6 +210,9 @@ class MonitorService:
                 ).lower()
                 if not any(keyword in haystack for keyword in keywords):
                     continue
+
+            if self.idf_filter is not None and not self.idf_filter.accepts(listing):
+                continue
 
             output.append(listing)
 

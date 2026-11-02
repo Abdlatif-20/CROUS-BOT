@@ -67,6 +67,7 @@ jobs:
           USER_AGENT: CROUS-BOT/1.0 (+personal-use; github-actions)
           FILTER_MAX_PRICE_EUR: ""
           FILTER_INCLUDE_KEYWORDS: ""
+          FILTER_IDF_MAX_DISTANCE_KM: ${{ vars.FILTER_IDF_MAX_DISTANCE_KM }}
           HEARTBEAT_ENABLED: "true"
           HEARTBEAT_INTERVAL_HOURS: "168"
           ERROR_ALERT_THRESHOLD: "3"
