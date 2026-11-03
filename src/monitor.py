@@ -17,8 +17,9 @@ from src.state_store import create_state_store
 from src.telegram_notifier import TelegramNotifier
 
 LOGGER = logging.getLogger(__name__)
-# A run sends ~2s per alert (Telegram + Discord throttles); 40 keeps a cycle well under Vercel's 300s cap.
+# Upper bound on alerts per cycle; the effective cap also shrinks with ALERT_DELAY_SECONDS.
 MAX_ALERTS_PER_CYCLE = 40
+SEND_BUDGET_SECONDS = 180
 DEDUP_BATCH_SIZE = 10
 
 
@@ -69,23 +70,37 @@ class MonitorService:
                 LOGGER.info("[DRY-RUN] New listing: %s | %s", listing.title, listing.url)
             return len(filtered_listings), len(new_listings)
 
-        for listing in new_listings:
+        for index, listing in enumerate(new_listings):
+            if index > 0:
+                time.sleep(self.settings.alert_delay_seconds)
             self.notifier.send_new_listing(listing)
             LOGGER.info("Sent Telegram alert for: %s", listing.url)
             self._send_discord_listing(listing)
 
         return len(filtered_listings), len(new_listings)
 
+    def _max_alerts_per_cycle(self) -> int:
+        # Each alert costs the configured delay plus ~2s of Telegram/Discord sends; fit the burst
+        # in SEND_BUDGET_SECONDS so the run stays under Vercel's maxDuration.
+        per_alert = self.settings.alert_delay_seconds + 2
+        return max(1, min(MAX_ALERTS_PER_CYCLE, SEND_BUDGET_SECONDS // per_alert))
+
     def _take_new(self, listings: list[Listing]) -> list[Listing]:
         # filter_new marks listings seen, so a big backlog (first run, wider search) is claimed in
         # small batches and capped per cycle; the rest stay unseen and alert on later cycles,
         # keeping each run inside the serverless time limit.
+        cap = self._max_alerts_per_cycle()
         new_listings: list[Listing] = []
-        for start in range(0, len(listings), DEDUP_BATCH_SIZE):
-            if len(new_listings) >= MAX_ALERTS_PER_CYCLE:
+        start = 0
+        while start < len(listings):
+            remaining = cap - len(new_listings)
+            if remaining <= 0:
                 LOGGER.info("Alert cap reached; remaining listings wait for the next cycle")
                 break
-            new_listings.extend(self.state_store.filter_new(listings[start:start + DEDUP_BATCH_SIZE]))
+            # Never claim more than the cap still allows, so a cycle cannot overshoot it.
+            batch = listings[start:start + min(DEDUP_BATCH_SIZE, remaining)]
+            new_listings.extend(self.state_store.filter_new(batch))
+            start += len(batch)
         return new_listings
 
     def sync_telegram_commands(self, dry_run: bool = False) -> int:

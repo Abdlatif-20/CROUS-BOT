@@ -59,6 +59,7 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           POLL_INTERVAL_SECONDS: "300"
           POLL_JITTER_SECONDS: "0"
+          ALERT_DELAY_SECONDS: "3"
           HTTP_TIMEOUT_SECONDS: "20"
           HTTP_MAX_RETRIES: "2"
           STATE_DB_PATH: .state/state.db
