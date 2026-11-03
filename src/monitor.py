@@ -17,6 +17,9 @@ from src.state_store import create_state_store
 from src.telegram_notifier import TelegramNotifier
 
 LOGGER = logging.getLogger(__name__)
+# A run sends ~2s per alert (Telegram + Discord throttles); 40 keeps a cycle well under Vercel's 300s cap.
+MAX_ALERTS_PER_CYCLE = 40
+DEDUP_BATCH_SIZE = 10
 
 
 class MonitorService:
@@ -59,7 +62,7 @@ class MonitorService:
         skipped_count = len(listings) - len(filtered_listings)
         if skipped_count > 0:
             LOGGER.info("Filtered out %s listing(s) using configured rules", skipped_count)
-        new_listings = self.state_store.filter_new(filtered_listings)
+        new_listings = self._take_new(filtered_listings)
 
         if dry_run:
             for listing in new_listings:
@@ -72,6 +75,18 @@ class MonitorService:
             self._send_discord_listing(listing)
 
         return len(filtered_listings), len(new_listings)
+
+    def _take_new(self, listings: list[Listing]) -> list[Listing]:
+        # filter_new marks listings seen, so a big backlog (first run, wider search) is claimed in
+        # small batches and capped per cycle; the rest stay unseen and alert on later cycles,
+        # keeping each run inside the serverless time limit.
+        new_listings: list[Listing] = []
+        for start in range(0, len(listings), DEDUP_BATCH_SIZE):
+            if len(new_listings) >= MAX_ALERTS_PER_CYCLE:
+                LOGGER.info("Alert cap reached; remaining listings wait for the next cycle")
+                break
+            new_listings.extend(self.state_store.filter_new(listings[start:start + DEDUP_BATCH_SIZE]))
+        return new_listings
 
     def sync_telegram_commands(self, dry_run: bool = False) -> int:
         raw_offset = self.state_store.get_meta("telegram_update_offset")

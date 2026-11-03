@@ -3,7 +3,7 @@
   "regions": ["cdg1"],
   "functions": {
     "api/check.py": {
-      "maxDuration": 120,
+      "maxDuration": 300,
       "includeFiles": "src/**"
     }
   }
