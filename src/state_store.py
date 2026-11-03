@@ -22,6 +22,13 @@ class StateStore:
     def set_meta(self, key: str, value: str) -> None:
         raise NotImplementedError
 
+    def acquire_lock(self, name: str, ttl_seconds: int) -> bool:
+        """Claim a lock so overlapping runs skip instead of doubling requests. Local runs are one process."""
+        return True
+
+    def release_lock(self, name: str) -> None:
+        pass
+
     def reset_failure_count(self) -> None:
         self.set_meta("consecutive_failures", "0")
 
@@ -171,6 +178,14 @@ class RedisStateStore(StateStore):
         added = self._pipeline(commands)
         # SADD returns 1 only for fingerprints not already in the set.
         return [listing for listing, result in zip(listings, added) if result == 1]
+
+    def acquire_lock(self, name: str, ttl_seconds: int) -> bool:
+        # NX + EX: only one caller wins, and a crashed run frees the lock when it expires.
+        result = self._pipeline([["SET", f"{self.META_PREFIX}lock:{name}", "1", "NX", "EX", str(ttl_seconds)]])[0]
+        return result == "OK"
+
+    def release_lock(self, name: str) -> None:
+        self._pipeline([["DEL", f"{self.META_PREFIX}lock:{name}"]])
 
     def get_meta(self, key: str) -> str | None:
         result = self._pipeline([["GET", f"{self.META_PREFIX}{key}"]])[0]

@@ -8,10 +8,13 @@ from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
 from src.config import load_settings
+from src.log_redaction import configure_logging
 from src.monitor import MonitorService
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(message)s")
+configure_logging(logging.INFO, "%(levelname)s | %(name)s | %(message)s")
 LOGGER = logging.getLogger(__name__)
+# Matches maxDuration in vercel.json, so a run killed by the timeout cannot hold the lock longer.
+LOCK_TTL_SECONDS = 300
 
 
 def _is_authorized(handler: BaseHTTPRequestHandler, query: dict[str, list[str]]) -> bool:
@@ -34,7 +37,16 @@ class handler(BaseHTTPRequestHandler):
         test_telegram = query.get("test", ["0"])[0] in {"1", "true"}
         try:
             service = MonitorService(load_settings())
-            total, new = service.run_cycle(test_telegram=test_telegram)
+            # A slow run (alert backlog) can outlast the pinger's interval; skip rather than overlap,
+            # which would double CROUS requests and trip Discord's webhook rate limit.
+            if not service.state_store.acquire_lock("check", LOCK_TTL_SECONDS):
+                LOGGER.info("Previous check still running, skipping")
+                self._reply(200, {"ok": True, "skipped": "previous check still running"})
+                return
+            try:
+                total, new = service.run_cycle(test_telegram=test_telegram)
+            finally:
+                service.state_store.release_lock("check")
         except Exception as exc:
             LOGGER.exception("Check failed")
             self._reply(500, {"ok": False, "error": type(exc).__name__})

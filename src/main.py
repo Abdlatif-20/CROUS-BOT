@@ -4,6 +4,7 @@ import argparse
 import logging
 
 from src.config import load_settings
+from src.log_redaction import configure_logging
 from src.monitor import MonitorService
 
 
@@ -26,10 +27,7 @@ def main() -> None:
 
     settings = load_settings()
     log_level = logging.DEBUG if args.debug else getattr(logging, settings.log_level, logging.INFO)
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    )
+    configure_logging(log_level, "%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 
     service = MonitorService(settings)
 
