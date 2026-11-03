@@ -12,6 +12,8 @@ class Listing:
     city: str | None = None
     residence: str | None = None
     external_id: str | None = None
+    # Not part of the fingerprint: a new photo alone should not re-alert.
+    image_url: str | None = None
 
     @property
     def fingerprint(self) -> str:

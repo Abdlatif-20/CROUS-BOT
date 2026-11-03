@@ -18,12 +18,20 @@ class TelegramNotifier:
         self.chat_ids = chat_ids
         self.timeout_seconds = timeout_seconds
         self.base_endpoint = f"https://api.telegram.org/bot{bot_token}"
-        self.endpoint = f"{self.base_endpoint}/sendMessage"
         self._last_sent_at = 0.0
 
     def send_new_listing(self, listing: Listing) -> None:
         message = format_listing_message(listing)
-        self._send_message(message)
+        if not listing.image_url:
+            self._send_message(message)
+            return
+        for chat_id in self.chat_ids:
+            payload = {"chat_id": chat_id, "photo": listing.image_url, "caption": message}
+            response = self._post_with_retry("sendPhoto", payload)
+            if response.status_code >= 400:
+                # Telegram fetches the photo itself and rejects URLs it cannot load; the text still matters.
+                LOGGER.warning("Telegram sendPhoto failed status=%s, sending text only", response.status_code)
+                self._send_message(message, chat_id=chat_id)
 
     def send_healthcheck(self) -> None:
         self._send_message("✅ CROUS monitor healthcheck: Telegram notifications are working.")
@@ -71,12 +79,7 @@ class TelegramNotifier:
                 "text": message,
                 "disable_web_page_preview": True,
             }
-            response = self._post_throttled(payload)
-            if response.status_code == 429:
-                retry_after = _get_retry_after(response)
-                LOGGER.warning("Telegram rate limit hit, retrying in %ss", retry_after)
-                time.sleep(retry_after)
-                response = self._post_throttled(payload)
+            response = self._post_with_retry("sendMessage", payload)
             if response.status_code >= 400:
                 LOGGER.error(
                     "Telegram send failed for chat_id=%s status=%s body=%s",
@@ -87,11 +90,20 @@ class TelegramNotifier:
                 response.raise_for_status()
 
 
-    def _post_throttled(self, payload: dict) -> requests.Response:
+    def _post_with_retry(self, method: str, payload: dict) -> requests.Response:
+        response = self._post_throttled(method, payload)
+        if response.status_code == 429:
+            retry_after = _get_retry_after(response)
+            LOGGER.warning("Telegram rate limit hit, retrying in %ss", retry_after)
+            time.sleep(retry_after)
+            response = self._post_throttled(method, payload)
+        return response
+
+    def _post_throttled(self, method: str, payload: dict) -> requests.Response:
         wait = MIN_SECONDS_BETWEEN_MESSAGES - (time.monotonic() - self._last_sent_at)
         if wait > 0:
             time.sleep(wait)
-        response = requests.post(self.endpoint, json=payload, timeout=self.timeout_seconds)
+        response = requests.post(f"{self.base_endpoint}/{method}", json=payload, timeout=self.timeout_seconds)
         self._last_sent_at = time.monotonic()
         return response
 

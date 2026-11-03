@@ -104,6 +104,8 @@ class DiscordNotifier:
             "footer": {"text": f"CROUS · annonce n°{listing.external_id}" if listing.external_id else "CROUS"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+        if listing.image_url:
+            embed["image"] = {"url": listing.image_url}
         self._send({"content": "🏠 Nouveau logement CROUS détecté", "embeds": [embed]})
 
     def _distance_from_paris_km(self, address: str, postcode: re.Match[str] | None) -> float | None:

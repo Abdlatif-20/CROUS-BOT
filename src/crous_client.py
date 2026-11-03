@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from typing import Iterable
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import requests
 from bs4 import BeautifulSoup, Tag
@@ -134,6 +134,10 @@ def _parse_dsfr_cards(soup: BeautifulSoup, base_url: str) -> list[Listing]:
         address = address_node.get_text(" ", strip=True) if address_node else ""
         city_match = POSTCODE_CITY_REGEX.search(address)
 
+        image = card.select_one("img[src]")
+        # CROUS image paths contain raw spaces and accents; Telegram/Discord need an encoded URL.
+        image_url = quote(urljoin(base_url, image["src"]), safe=":/?&=%#") if image else None
+
         listings.append(
             Listing(
                 title=title,
@@ -142,6 +146,7 @@ def _parse_dsfr_cards(soup: BeautifulSoup, base_url: str) -> list[Listing]:
                 city=city_match.group(1) if city_match else _clean_optional_text(address),
                 residence=_clean_optional_text(address),
                 external_id=id_match.group(1) if id_match else None,
+                image_url=image_url,
             )
         )
     return listings
