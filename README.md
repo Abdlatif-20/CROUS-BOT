@@ -53,7 +53,7 @@ Optional:
 
 - `FILTER_MAX_PRICE_EUR` (only alert when listing price is <= this value)
 - `FILTER_INCLUDE_KEYWORDS` (comma-separated keywords that must match title/city/residence/url)
-- `FILTER_IDF_MAX_DISTANCE_KM` (only alert for listings in Île-de-France or within N km of its border; addresses outside IDF departments are geocoded with the free api-adresse.data.gouv.fr and cached. Pair with search URL `.../tools/47/search?bounds=1.30_49.34_3.70_48.02` (IDF + ~10 km) so fewer pages are fetched)
+- `FILTER_IDF_MAX_DISTANCE_KM` (only alert for listings in Île-de-France or within N km of its border; addresses outside IDF departments are geocoded with the free api-adresse.data.gouv.fr and cached. Pair with search URL `.../tools/48/search?bounds=1.30_49.34_3.70_48.02` (IDF + ~10 km) so fewer pages are fetched)
 - `HEARTBEAT_ENABLED` (`true|false`, default `false`)
 - `HEARTBEAT_INTERVAL_HOURS` (default `168`)
 - `ERROR_ALERT_THRESHOLD` (default `3` consecutive failures)
@@ -103,7 +103,7 @@ dedup state lives in Upstash Redis (free tier, via the Vercel Marketplace).
    `FILTER_IDF_MAX_DISTANCE_KM`, and a random `CRON_SECRET`.
 4. `vercel deploy --prod`.
 5. On cron-job.org, create a job calling `https://<your-project>.vercel.app/api/check?key=<CRON_SECRET>`
-   every 2 minutes. Add `&test=1` once to send a healthcheck.
+   every 5 minutes. Add `&test=1` once to send a healthcheck.
 
 The endpoint returns `401` without the right key, and `{"ok": true, "total": N, "new": M}` on success.
 Dependencies for Vercel come from `pyproject.toml` (keep it in sync with `requirements.txt`).
@@ -156,7 +156,7 @@ The next scheduled run applies them and confirms back in Telegram.
 
 Multi-location example for `CROUS_SEARCH_URLS`:
 
-`https://trouverunlogement.lescrous.fr/tools/47/search?bounds=...,https://trouverunlogement.lescrous.fr/tools/47/search?bounds=...`
+`https://trouverunlogement.lescrous.fr/tools/48/search?bounds=...,https://trouverunlogement.lescrous.fr/tools/48/search?bounds=...`
 
 Multi-recipient example for `TELEGRAM_CHAT_IDS`:
 

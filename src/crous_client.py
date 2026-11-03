@@ -18,6 +18,8 @@ LOGGER = logging.getLogger(__name__)
 PRICE_REGEX = re.compile(r"(\d{1,4}(?:[.,]\d{1,2})?)\s*€")
 ACCOMMODATION_ID_REGEX = re.compile(r"/accommodations/(\d+)")
 POSTCODE_CITY_REGEX = re.compile(r"\b\d{5}\s+(.+)$")
+TOOL_ID_REGEX = re.compile(r"/tools/(\d+)/")
+HOMEPAGE_URL = "https://trouverunlogement.lescrous.fr/"
 MAX_PAGES = 10
 
 
@@ -45,6 +47,28 @@ class CrousClient:
         self.session.mount("http://", adapter)
 
     def fetch_listings(self, search_url: str) -> list[Listing]:
+        try:
+            return self._fetch_all_pages(search_url)
+        except requests.HTTPError as exc:
+            # The tool ID in search URLs changes every academic year and old IDs 404.
+            if exc.response is None or exc.response.status_code != 404:
+                raise
+            current_url = self._with_current_tool_id(search_url)
+            if current_url is None:
+                raise
+            LOGGER.warning("Search URL 404s, retrying with current tool ID: %s", current_url)
+            return self._fetch_all_pages(current_url)
+
+    def _with_current_tool_id(self, search_url: str) -> str | None:
+        response = self.session.get(HOMEPAGE_URL, timeout=self.timeout_seconds)
+        response.raise_for_status()
+        match = re.search(r"/tools/(\d+)/search", response.text)
+        if match is None or not TOOL_ID_REGEX.search(search_url):
+            return None
+        updated = TOOL_ID_REGEX.sub(f"/tools/{match.group(1)}/", search_url, count=1)
+        return None if updated == search_url else updated
+
+    def _fetch_all_pages(self, search_url: str) -> list[Listing]:
         listings: list[Listing] = []
         page_url: str | None = search_url
         visited: set[str] = set()
