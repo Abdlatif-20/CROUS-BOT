@@ -17,9 +17,8 @@ from src.state_store import create_state_store
 from src.telegram_notifier import TelegramNotifier
 
 LOGGER = logging.getLogger(__name__)
-# Upper bound on alerts per cycle; the effective cap also shrinks with ALERT_DELAY_SECONDS.
+# A run sends ~2s per alert (Telegram + Discord throttles); 40 keeps a cycle well under Vercel's 300s cap.
 MAX_ALERTS_PER_CYCLE = 40
-SEND_BUDGET_SECONDS = 180
 DEDUP_BATCH_SIZE = 10
 
 
@@ -70,26 +69,18 @@ class MonitorService:
                 LOGGER.info("[DRY-RUN] New listing: %s | %s", listing.title, listing.url)
             return len(filtered_listings), len(new_listings)
 
-        for index, listing in enumerate(new_listings):
-            if index > 0:
-                time.sleep(self.settings.alert_delay_seconds)
+        for listing in new_listings:
             self.notifier.send_new_listing(listing)
             LOGGER.info("Sent Telegram alert for: %s", listing.url)
             self._send_discord_listing(listing)
 
         return len(filtered_listings), len(new_listings)
 
-    def _max_alerts_per_cycle(self) -> int:
-        # Each alert costs the configured delay plus ~2s of Telegram/Discord sends; fit the burst
-        # in SEND_BUDGET_SECONDS so the run stays under Vercel's maxDuration.
-        per_alert = self.settings.alert_delay_seconds + 2
-        return max(1, min(MAX_ALERTS_PER_CYCLE, SEND_BUDGET_SECONDS // per_alert))
-
     def _take_new(self, listings: list[Listing]) -> list[Listing]:
         # filter_new marks listings seen, so a big backlog (first run, wider search) is claimed in
         # small batches and capped per cycle; the rest stay unseen and alert on later cycles,
         # keeping each run inside the serverless time limit.
-        cap = self._max_alerts_per_cycle()
+        cap = MAX_ALERTS_PER_CYCLE
         new_listings: list[Listing] = []
         start = 0
         while start < len(listings):

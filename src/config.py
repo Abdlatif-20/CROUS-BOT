@@ -13,7 +13,6 @@ class Settings:
     telegram_chat_ids: tuple[str, ...]
     poll_interval_seconds: int
     poll_jitter_seconds: int
-    alert_delay_seconds: int
     http_timeout_seconds: int
     http_max_retries: int
     state_db_path: str
@@ -99,7 +98,6 @@ def load_settings() -> Settings:
         telegram_chat_ids=_get_chat_ids(),
         poll_interval_seconds=_get_int("POLL_INTERVAL_SECONDS", default=180, minimum=30),
         poll_jitter_seconds=_get_int("POLL_JITTER_SECONDS", default=20, minimum=0),
-        alert_delay_seconds=_get_int("ALERT_DELAY_SECONDS", default=3, minimum=0),
         http_timeout_seconds=_get_int("HTTP_TIMEOUT_SECONDS", default=15, minimum=5),
         http_max_retries=_get_int("HTTP_MAX_RETRIES", default=2, minimum=0),
         state_db_path=os.getenv("STATE_DB_PATH", "data/state.db").strip(),
