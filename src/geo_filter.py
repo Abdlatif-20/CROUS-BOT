@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import re
+import unicodedata
 from pathlib import Path
 
 import requests
@@ -113,3 +114,58 @@ class IdfDistanceFilter:
         distance = distance_to_idf_km(*coordinates)
         LOGGER.debug("%s is %.1f km from Île-de-France", listing.title, distance)
         return distance <= self.max_distance_km
+
+
+# Estimated door-to-door public-transport minutes from École 42 Paris (96 bd Bessières, 75017;
+# Porte de Clichy: M13, M14, RER C) to CROUS towns in departments bordering Île-de-France.
+# Includes the metro ride to the Paris terminus and typical waiting. There is no free keyless
+# transit router, so these are hand estimates; add towns here as new ones show up in the logs.
+TRANSIT_MINUTES_FROM_42 = {
+    # Oise (60), trains from Gare du Nord
+    "CHANTILLY": 45, "CREIL": 60, "NOGENT SUR OISE": 65, "SENLIS": 75, "COMPIEGNE": 80,
+    "BEAUVAIS": 105,
+    # Eure (27), trains from Saint-Lazare (M14, one stop)
+    "VERNON": 60, "VAL DE REUIL": 70, "EVREUX": 80, "LOUVIERS": 85,
+    # Eure-et-Loir (28), trains from Montparnasse
+    "DREUX": 80, "CHARTRES": 100,
+    # Loiret (45), trains from Austerlitz / Bercy
+    "MONTARGIS": 95, "ORLEANS": 95,
+    # Aisne (02), trains from Gare de l'Est / Gare du Nord
+    "CHATEAU THIERRY": 75, "SOISSONS": 100, "LAON": 120, "SAINT QUENTIN": 110,
+    # Marne (51), TGV from Gare de l'Est
+    "REIMS": 75, "EPERNAY": 100, "CHALONS EN CHAMPAGNE": 105,
+    # Aube (10) and Yonne (89), trains from Gare de l'Est / Bercy
+    "NOGENT SUR SEINE": 80, "SENS": 80, "TROYES": 110, "AUXERRE": 120,
+}
+NEARBY_MAX_TRANSIT_MINUTES = 90
+
+ZONE_IDF = "Île-de-France"
+ZONE_NEARBY = "Nearby Île-de-France"
+ZONE_OTHER = "Not Île-de-France"
+
+
+def _normalize_town(town: str) -> str:
+    town = CEDEX_REGEX.sub("", town)
+    ascii_town = unicodedata.normalize("NFKD", town).encode("ascii", "ignore").decode()
+    return re.sub(r"[\s'-]+", " ", ascii_town).strip().upper()
+
+
+def idf_zone(listing: Listing) -> str:
+    """Île-de-France, nearby (≤ 1h30 public transport from 42 Paris), or neither."""
+    address = listing.residence or listing.city or listing.title
+    match = POSTCODE_REGEX.search(address)
+    if match is None:
+        return ZONE_OTHER
+    if match.group(2) in IDF_DEPARTMENTS:
+        return ZONE_IDF
+    if match.group(2) in NEIGHBOUR_DEPARTMENTS:
+        minutes = TRANSIT_MINUTES_FROM_42.get(_normalize_town(match.group(3)))
+        if minutes is None:
+            LOGGER.info("No transit estimate for %s, tagging as not nearby", match.group(3))
+        elif minutes <= NEARBY_MAX_TRANSIT_MINUTES:
+            return ZONE_NEARBY
+    return ZONE_OTHER
+
+
+def alert_headline(listing: Listing) -> str:
+    return f"🏠 Nouveau logement CROUS détecté ({idf_zone(listing)})"

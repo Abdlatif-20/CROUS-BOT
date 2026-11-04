@@ -5,6 +5,7 @@ import time
 
 import requests
 
+from src.geo_filter import alert_headline
 from src.models import Listing
 
 LOGGER = logging.getLogger(__name__)
@@ -117,7 +118,7 @@ def _get_retry_after(response: requests.Response) -> int:
 
 
 def format_listing_message(listing: Listing) -> str:
-    lines = ["🏠 Nouveau logement CROUS détecté", "", f"Titre: {listing.title}"]
+    lines = [alert_headline(listing), "", f"Titre: {listing.title}"]
     if listing.price_eur is not None:
         lines.append(f"Prix: {listing.price_eur} €")
     if listing.city:
