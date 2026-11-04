@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import html
 import logging
 import time
 
 import requests
 
+from src.listing_details import ListingDetails, format_minutes
 from src.models import Listing
 
 LOGGER = logging.getLogger(__name__)
@@ -20,18 +22,18 @@ class TelegramNotifier:
         self.base_endpoint = f"https://api.telegram.org/bot{bot_token}"
         self._last_sent_at = 0.0
 
-    def send_new_listing(self, listing: Listing, headline: str) -> None:
-        message = format_listing_message(listing, headline)
+    def send_new_listing(self, listing: Listing, headline: str, details: ListingDetails) -> None:
+        message = format_listing_message(listing, headline, details)
         if not listing.image_url:
-            self._send_message(message)
+            self._send_message(message, parse_mode="HTML")
             return
         for chat_id in self.chat_ids:
-            payload = {"chat_id": chat_id, "photo": listing.image_url, "caption": message}
+            payload = {"chat_id": chat_id, "photo": listing.image_url, "caption": message, "parse_mode": "HTML"}
             response = self._post_with_retry("sendPhoto", payload)
             if response.status_code >= 400:
                 # Telegram fetches the photo itself and rejects URLs it cannot load; the text still matters.
                 LOGGER.warning("Telegram sendPhoto failed status=%s, sending text only", response.status_code)
-                self._send_message(message, chat_id=chat_id)
+                self._send_message(message, chat_id=chat_id, parse_mode="HTML")
 
     def send_healthcheck(self) -> None:
         self._send_message("✅ CROUS monitor healthcheck: Telegram notifications are working.")
@@ -71,7 +73,7 @@ class TelegramNotifier:
             return []
         return [item for item in result if isinstance(item, dict)]
 
-    def _send_message(self, message: str, chat_id: str | None = None) -> None:
+    def _send_message(self, message: str, chat_id: str | None = None, parse_mode: str | None = None) -> None:
         target_chat_ids = (chat_id,) if chat_id else self.chat_ids
         for target_chat_id in target_chat_ids:
             payload = {
@@ -79,6 +81,8 @@ class TelegramNotifier:
                 "text": message,
                 "disable_web_page_preview": True,
             }
+            if parse_mode:
+                payload["parse_mode"] = parse_mode
             response = self._post_with_retry("sendMessage", payload)
             if response.status_code >= 400:
                 LOGGER.error(
@@ -116,13 +120,31 @@ def _get_retry_after(response: requests.Response) -> int:
     return int(retry_after) if isinstance(retry_after, (int, float)) else 5
 
 
-def format_listing_message(listing: Listing, headline: str) -> str:
-    lines = [headline, "", f"Titre: {listing.title}"]
+def format_listing_message(listing: Listing, headline: str, details: ListingDetails) -> str:
+    """HTML (parse_mode=HTML) mirror of the Discord embed. Telegram caps photo captions at 1024
+    visible characters; link URLs do not count, and this stays well under it."""
+
+    def link(label: str, url: str) -> str:
+        return f'<a href="{html.escape(url)}">{html.escape(label)}</a>'
+
+    lines = [f"<b>{html.escape(headline)}</b>", "", f"<b>{html.escape(listing.title)}</b>"]
     if listing.price_eur is not None:
-        lines.append(f"Prix: {listing.price_eur} €")
+        lines.append(f"💶 Prix: <b>{listing.price_eur} €</b> / mois")
+    if details.postcode:
+        lines.append(f"📮 Code postal: <code>{details.postcode}</code> · {html.escape(details.department or '')}")
     if listing.city:
-        lines.append(f"Ville: {listing.city}")
-    if listing.residence:
-        lines.append(f"Résidence: {listing.residence}")
-    lines.extend(["", f"Voir: {listing.url}"])
+        lines.append(f"🏙️ Ville: {html.escape(listing.city.title())}")
+    if details.address and details.maps_url:
+        lines.append(f"📍 Adresse: {link(details.address, details.maps_url)}")
+    if details.distance_from_paris_km is not None:
+        lines.append(f"📏 Distance: ~{details.distance_from_paris_km:.0f} km de Paris centre (à vol d'oiseau)")
+    if details.transit_minutes_from_42 is not None:
+        lines.append(
+            f"🏫 Depuis 42 Paris: ~{format_minutes(details.transit_minutes_from_42)} en transports (semaine, départ 8h)"
+        )
+    if details.routes:
+        lines.append("🧭 Itinéraire depuis ma position: " + " · ".join(link(label, url) for label, url in details.routes))
+    lines.extend(["", f"🔗 {link('Voir et réserver sur le CROUS', listing.url)}"])
+    if listing.external_id:
+        lines.append(f"<i>CROUS · annonce n°{listing.external_id}</i>")
     return "\n".join(lines)
