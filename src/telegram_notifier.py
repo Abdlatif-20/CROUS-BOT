@@ -5,7 +5,6 @@ import time
 
 import requests
 
-from src.geo_filter import alert_headline
 from src.models import Listing
 
 LOGGER = logging.getLogger(__name__)
@@ -21,8 +20,8 @@ class TelegramNotifier:
         self.base_endpoint = f"https://api.telegram.org/bot{bot_token}"
         self._last_sent_at = 0.0
 
-    def send_new_listing(self, listing: Listing) -> None:
-        message = format_listing_message(listing)
+    def send_new_listing(self, listing: Listing, headline: str) -> None:
+        message = format_listing_message(listing, headline)
         if not listing.image_url:
             self._send_message(message)
             return
@@ -117,8 +116,8 @@ def _get_retry_after(response: requests.Response) -> int:
     return int(retry_after) if isinstance(retry_after, (int, float)) else 5
 
 
-def format_listing_message(listing: Listing) -> str:
-    lines = [alert_headline(listing), "", f"Titre: {listing.title}"]
+def format_listing_message(listing: Listing, headline: str) -> str:
+    lines = [headline, "", f"Titre: {listing.title}"]
     if listing.price_eur is not None:
         lines.append(f"Prix: {listing.price_eur} €")
     if listing.city:

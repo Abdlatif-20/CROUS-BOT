@@ -11,7 +11,7 @@ from requests import RequestException
 from src.config import Settings
 from src.crous_client import CrousClient
 from src.discord_notifier import DiscordNotifier
-from src.geo_filter import IdfDistanceFilter
+from src.geo_filter import IdfDistanceFilter, ZoneClassifier
 from src.models import Listing
 from src.state_store import create_state_store
 from src.telegram_notifier import TelegramNotifier
@@ -43,6 +43,7 @@ class MonitorService:
                 state_store=self.state_store,
                 timeout_seconds=settings.http_timeout_seconds,
             )
+        self.zones = ZoneClassifier(self.state_store, settings.http_timeout_seconds)
         self.discord: DiscordNotifier | None = None
         if settings.discord_webhook_url:
             self.discord = DiscordNotifier(
@@ -70,9 +71,10 @@ class MonitorService:
             return len(filtered_listings), len(new_listings)
 
         for listing in new_listings:
-            self.notifier.send_new_listing(listing)
+            headline = self.zones.headline(listing)
+            self.notifier.send_new_listing(listing, headline)
             LOGGER.info("Sent Telegram alert for: %s", listing.url)
-            self._send_discord_listing(listing)
+            self._send_discord_listing(listing, headline)
 
         return len(filtered_listings), len(new_listings)
 
@@ -216,12 +218,12 @@ class MonitorService:
             LOGGER.debug("Sleeping for %ss before next poll", sleep_seconds)
             time.sleep(sleep_seconds)
 
-    def _send_discord_listing(self, listing: Listing) -> None:
+    def _send_discord_listing(self, listing: Listing, headline: str) -> None:
         if self.discord is None:
             return
         # Discord is best-effort: the listing is already marked seen and alerted on Telegram.
         try:
-            self.discord.send_new_listing(listing)
+            self.discord.send_new_listing(listing, headline)
             LOGGER.info("Sent Discord alert for: %s", listing.url)
         except Exception:
             LOGGER.exception("Discord alert failed for: %s", listing.url)

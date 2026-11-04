@@ -8,7 +8,7 @@ from urllib.parse import quote_plus
 
 import requests
 
-from src.geo_filter import CEDEX_REGEX, POSTCODE_REGEX, alert_headline, distance_between_km, geocode
+from src.geo_filter import CEDEX_REGEX, POSTCODE_REGEX, distance_between_km, geocode
 from src.models import Listing
 from src.state_store import StateStore
 
@@ -51,7 +51,7 @@ class DiscordNotifier:
         self.state_store = state_store
         self._last_sent_at = 0.0
 
-    def send_new_listing(self, listing: Listing) -> None:
+    def send_new_listing(self, listing: Listing, headline: str) -> None:
         address = listing.residence or listing.city
         postcode = POSTCODE_REGEX.search(address) if address else None
 
@@ -106,7 +106,7 @@ class DiscordNotifier:
         }
         if listing.image_url:
             embed["image"] = {"url": listing.image_url}
-        self._send({"content": alert_headline(listing), "embeds": [embed]})
+        self._send({"content": headline, "embeds": [embed]})
 
     def _distance_from_paris_km(self, address: str, postcode: re.Match[str] | None) -> float | None:
         if self.state_store is None:

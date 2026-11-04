@@ -4,8 +4,9 @@ import json
 import logging
 import math
 import re
-import unicodedata
+from datetime import datetime, time, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -116,56 +117,101 @@ class IdfDistanceFilter:
         return distance <= self.max_distance_km
 
 
-# Estimated door-to-door public-transport minutes from École 42 Paris (96 bd Bessières, 75017;
-# Porte de Clichy: M13, M14, RER C) to CROUS towns in departments bordering Île-de-France.
-# Includes the metro ride to the Paris terminus and typical waiting. There is no free keyless
-# transit router, so these are hand estimates; add towns here as new ones show up in the logs.
-TRANSIT_MINUTES_FROM_42 = {
-    # Oise (60), trains from Gare du Nord
-    "CHANTILLY": 45, "CREIL": 60, "NOGENT SUR OISE": 65, "SENLIS": 75, "COMPIEGNE": 80,
-    "BEAUVAIS": 105,
-    # Eure (27), trains from Saint-Lazare (M14, one stop)
-    "VERNON": 60, "VAL DE REUIL": 70, "EVREUX": 80, "LOUVIERS": 85,
-    # Eure-et-Loir (28), trains from Montparnasse
-    "DREUX": 80, "CHARTRES": 100,
-    # Loiret (45), trains from Austerlitz / Bercy
-    "MONTARGIS": 95, "ORLEANS": 95,
-    # Aisne (02), trains from Gare de l'Est / Gare du Nord
-    "CHATEAU THIERRY": 75, "SOISSONS": 100, "LAON": 120, "SAINT QUENTIN": 110,
-    # Marne (51), TGV from Gare de l'Est
-    "REIMS": 75, "EPERNAY": 100, "CHALONS EN CHAMPAGNE": 105,
-    # Aube (10) and Yonne (89), trains from Gare de l'Est / Bercy
-    "NOGENT SUR SEINE": 80, "SENS": 80, "TROYES": 110, "AUXERRE": 120,
-}
+
+# École 42 Paris, 96 boulevard Bessières 75017 (api-adresse.data.gouv.fr), as (lon, lat).
+ECOLE_42 = (2.318504, 48.896419)
+# Transitous: free, keyless MOTIS router over French GTFS feeds (SNCF TER/TGV, IDFM). Fair use:
+# identify the client and cache results, which we do per destination in meta.
+TRANSIT_ENDPOINT = "https://api.transitous.org/api/v5/plan"
+TRANSIT_USER_AGENT = "CROUS-BOT/1.0 (+https://github.com/Abdlatif-20/CROUS-BOT)"
 NEARBY_MAX_TRANSIT_MINUTES = 90
+# Nothing farther than this reaches 42 within 1h30 even by TGV (Lille is ~205 km), so skip routing.
+TRANSIT_CHECK_MAX_KM = 250
+PARIS_TZ = ZoneInfo("Europe/Paris")
 
 ZONE_IDF = "Île-de-France"
 ZONE_NEARBY = "Nearby Île-de-France"
 ZONE_OTHER = "Not Île-de-France"
 
 
-def _normalize_town(town: str) -> str:
-    town = CEDEX_REGEX.sub("", town)
-    ascii_town = unicodedata.normalize("NFKD", town).encode("ascii", "ignore").decode()
-    return re.sub(r"[\s'-]+", " ", ascii_town).strip().upper()
+def _reference_departure() -> datetime:
+    """Next weekday 08:00 Paris time, so journeys reflect a normal school-day morning."""
+    day = datetime.now(PARIS_TZ).date() + timedelta(days=1)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return datetime.combine(day, time(8, 0), tzinfo=PARIS_TZ)
 
 
-def idf_zone(listing: Listing) -> str:
-    """Île-de-France, nearby (≤ 1h30 public transport from 42 Paris), or neither."""
-    address = listing.residence or listing.city or listing.title
-    match = POSTCODE_REGEX.search(address)
-    if match is None:
-        return ZONE_OTHER
-    if match.group(2) in IDF_DEPARTMENTS:
-        return ZONE_IDF
-    if match.group(2) in NEIGHBOUR_DEPARTMENTS:
-        minutes = TRANSIT_MINUTES_FROM_42.get(_normalize_town(match.group(3)))
-        if minutes is None:
-            LOGGER.info("No transit estimate for %s, tagging as not nearby", match.group(3))
-        elif minutes <= NEARBY_MAX_TRANSIT_MINUTES:
+def transit_minutes_from_42(
+    destination: tuple[float, float], state_store: StateStore, timeout_seconds: int
+) -> int | None:
+    """Fastest public-transport journey from École 42 in minutes; -1 if no route; None on error."""
+    lon, lat = destination
+    cache_key = f"transit42:{lon:.4f},{lat:.4f}"
+    cached = state_store.get_meta(cache_key)
+    if cached:
+        return int(cached)
+
+    try:
+        response = requests.get(
+            TRANSIT_ENDPOINT,
+            params={
+                "fromPlace": f"{ECOLE_42[1]},{ECOLE_42[0]}",
+                "toPlace": f"{lat},{lon}",
+                "time": _reference_departure().isoformat(),
+            },
+            headers={"User-Agent": TRANSIT_USER_AGENT},
+            timeout=timeout_seconds,
+        )
+        response.raise_for_status()
+        itineraries = response.json().get("itineraries") or []
+    except (requests.RequestException, ValueError) as exc:
+        LOGGER.warning("Transit routing failed for %s,%s: %s", lat, lon, exc)
+        return None
+
+    durations = [item["duration"] for item in itineraries if isinstance(item.get("duration"), int)]
+    minutes = round(min(durations) / 60) if durations else -1
+    state_store.set_meta(cache_key, str(minutes))
+    return minutes
+
+
+def locate(address: str, state_store: StateStore, timeout_seconds: int) -> tuple[float, float] | None:
+    """Geocode an address, retrying with just postcode + town when the full address is not found."""
+    coordinates = geocode(address, state_store, timeout_seconds)
+    postcode = POSTCODE_REGEX.search(address)
+    if coordinates is None and postcode:
+        town = CEDEX_REGEX.sub("", postcode.group(3))
+        coordinates = geocode(f"{postcode.group(1)} {town}", state_store, timeout_seconds)
+    return coordinates
+
+
+class ZoneClassifier:
+    """Labels a listing Île-de-France, nearby (≤ 1h30 public transport from 42 Paris), or neither."""
+
+    def __init__(self, state_store: StateStore, timeout_seconds: int) -> None:
+        self.state_store = state_store
+        self.timeout_seconds = timeout_seconds
+
+    def zone(self, listing: Listing) -> str:
+        address = listing.residence or listing.city or listing.title
+        postcode = POSTCODE_REGEX.search(address)
+        if postcode and postcode.group(2) in IDF_DEPARTMENTS:
+            return ZONE_IDF
+
+        coordinates = locate(address, self.state_store, self.timeout_seconds)
+        if coordinates is None:
+            LOGGER.warning("Could not locate listing for zone, tagging as not IDF: %s", address)
+            return ZONE_OTHER
+        if distance_to_idf_km(*coordinates) == 0:
+            return ZONE_IDF
+        if distance_between_km(coordinates, ECOLE_42) > TRANSIT_CHECK_MAX_KM:
+            return ZONE_OTHER
+
+        minutes = transit_minutes_from_42(coordinates, self.state_store, self.timeout_seconds)
+        LOGGER.info("Transit from 42 to %s: %s min", address, minutes)
+        if minutes is not None and 0 <= minutes <= NEARBY_MAX_TRANSIT_MINUTES:
             return ZONE_NEARBY
-    return ZONE_OTHER
+        return ZONE_OTHER
 
-
-def alert_headline(listing: Listing) -> str:
-    return f"🏠 Nouveau logement CROUS détecté ({idf_zone(listing)})"
+    def headline(self, listing: Listing) -> str:
+        return f"🏠 Nouveau logement CROUS détecté ({self.zone(listing)})"
