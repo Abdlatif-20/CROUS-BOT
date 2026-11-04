@@ -103,7 +103,7 @@ dedup state lives in Upstash Redis (free tier, via the Vercel Marketplace).
    `FILTER_IDF_MAX_DISTANCE_KM`, and a random `CRON_SECRET`.
 4. `vercel deploy --prod`.
 5. On cron-job.org, create a job calling `https://<your-project>.vercel.app/api/check?key=<CRON_SECRET>`
-   every 5 minutes. Add `&test=1` once to send a healthcheck.
+   every 2 minutes. Add `&test=1` once to send a healthcheck.
 
 The endpoint returns `401` without the right key, and `{"ok": true, "total": N, "new": M}` on success.
 Dependencies for Vercel come from `pyproject.toml` (keep it in sync with `requirements.txt`).
