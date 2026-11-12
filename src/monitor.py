@@ -85,7 +85,7 @@ class MonitorService:
             headline = self.zones.headline(listing)
             details = build_details(listing, self.state_store, self.settings.http_timeout_seconds)
             self.notifier.send_new_listing(listing, headline, details)
-            LOGGER.info("Sent Telegram alert for: %s", listing.url)
+            LOGGER.info("Sent Telegram alert for: %s | %s", listing.url, headline)
             self._send_discord_listing(listing, headline, details)
 
         return len(filtered_listings), len(new_listings)
