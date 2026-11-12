@@ -204,7 +204,110 @@ class RedisStateStore(StateStore):
         self._pipeline([["SET", f"{self.META_PREFIX}{key}", value]])
 
 
+class TursoStateStore(StateStore):
+    """Turso (libSQL) over its HTTP pipeline API. Free tier is billed by rows read/written, not
+    by request or compute hour, so a check every two minutes stays far inside it."""
+
+    def __init__(self, database_url: str, auth_token: str, timeout_seconds: int = 15) -> None:
+        # Vercel hands out libsql:// URLs; the HTTP API lives on the same host over https.
+        self.base_url = database_url.replace("libsql://", "https://", 1).rstrip("/")
+        self.timeout_seconds = timeout_seconds
+        self.session = requests.Session()
+        self.session.headers["Authorization"] = f"Bearer {auth_token}"
+        self._execute(
+            [
+                (
+                    "CREATE TABLE IF NOT EXISTS seen_listings (fingerprint TEXT PRIMARY KEY, title TEXT NOT NULL,"
+                    " url TEXT NOT NULL, first_seen_at TEXT NOT NULL)",
+                    [],
+                ),
+                ("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)", []),
+            ]
+        )
+
+    def _execute(self, statements: list[tuple[str, list[str]]]) -> list[dict]:
+        """Run statements in one HTTP round trip; returns each statement's result."""
+        requests_body = [
+            {
+                "type": "execute",
+                "stmt": {"sql": sql, "args": [{"type": "text", "value": value} for value in args]},
+            }
+            for sql, args in statements
+        ]
+        requests_body.append({"type": "close"})
+        response = self.session.post(
+            f"{self.base_url}/v2/pipeline", json={"requests": requests_body}, timeout=self.timeout_seconds
+        )
+        response.raise_for_status()
+        results = []
+        for item in response.json()["results"][: len(statements)]:
+            if item.get("type") != "ok":
+                raise RuntimeError(f"Turso error: {item.get('error')}")
+            results.append(item["response"]["result"])
+        return results
+
+    def filter_new(self, listings: list[Listing], limit: int | None = None) -> list[Listing]:
+        if not listings:
+            return []
+        placeholders = ",".join("?" * len(listings))
+        rows = self._execute(
+            [
+                (
+                    f"SELECT fingerprint FROM seen_listings WHERE fingerprint IN ({placeholders})",
+                    [item.fingerprint for item in listings],
+                )
+            ]
+        )[0]["rows"]
+        seen = {row[0]["value"] for row in rows}
+        new_items = [listing for listing in listings if listing.fingerprint not in seen]
+        if limit is not None:
+            new_items = new_items[:limit]
+        if new_items:
+            now = datetime.now(timezone.utc).isoformat()
+            values = ",".join("(?, ?, ?, ?)" for _ in new_items)
+            args = [value for item in new_items for value in (item.fingerprint, item.title, item.url, now)]
+            self._execute([(f"INSERT OR IGNORE INTO seen_listings VALUES {values}", args)])
+        return new_items
+
+    def get_meta(self, key: str) -> str | None:
+        rows = self._execute([("SELECT value FROM meta WHERE key = ?", [key])])[0]["rows"]
+        return rows[0][0]["value"] if rows else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self._execute(
+            [
+                (
+                    "INSERT INTO meta (key, value) VALUES (?, ?)"
+                    " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    [key, value],
+                )
+            ]
+        )
+
+    def acquire_lock(self, name: str, ttl_seconds: int) -> bool:
+        # One atomic upsert: inserts a fresh lock, or takes over one whose expiry has passed.
+        now = datetime.now(timezone.utc).timestamp()
+        result = self._execute(
+            [
+                (
+                    "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE"
+                    " SET value = excluded.value WHERE CAST(meta.value AS REAL) < CAST(? AS REAL)",
+                    [f"lock:{name}", str(now + ttl_seconds), str(now)],
+                )
+            ]
+        )[0]
+        return result["affected_row_count"] == 1
+
+    def release_lock(self, name: str) -> None:
+        self._execute([("DELETE FROM meta WHERE key = ?", [f"lock:{name}"])])
+
+
 def create_state_store(db_path: str, timeout_seconds: int) -> StateStore:
+    # Turso via the Vercel Marketplace sets TURSO_DATABASE_URL / TURSO_AUTH_TOKEN.
+    turso_url = os.getenv("TURSO_DATABASE_URL")
+    turso_token = os.getenv("TURSO_AUTH_TOKEN")
+    if turso_url and turso_token:
+        return TursoStateStore(turso_url, turso_token, timeout_seconds)
     # Vercel Marketplace Upstash sets KV_REST_API_*; a direct Upstash setup uses UPSTASH_REDIS_REST_*.
     rest_url = os.getenv("UPSTASH_REDIS_REST_URL") or os.getenv("KV_REST_API_URL")
     rest_token = os.getenv("UPSTASH_REDIS_REST_TOKEN") or os.getenv("KV_REST_API_TOKEN")
