@@ -26,6 +26,7 @@ class Settings:
     error_alert_threshold: int
     error_alert_cooldown_minutes: int
     discord_webhook_url: str | None
+    discord_mention_user_ids: tuple[str, ...]
 
 
 def _get_int(name: str, default: int, minimum: int) -> int:
@@ -115,4 +116,7 @@ def load_settings() -> Settings:
             "ERROR_ALERT_COOLDOWN_MINUTES", default=180, minimum=1
         ),
         discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", "").strip() or None,
+        discord_mention_user_ids=tuple(
+            item.strip() for item in os.getenv("DISCORD_MENTION_USER_IDS", "").split(",") if item.strip()
+        ),
     )

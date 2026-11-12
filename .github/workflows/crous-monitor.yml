@@ -57,6 +57,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_MENTION_USER_IDS: ${{ secrets.DISCORD_MENTION_USER_IDS }}
           POLL_INTERVAL_SECONDS: "300"
           POLL_JITTER_SECONDS: "0"
           HTTP_TIMEOUT_SECONDS: "20"

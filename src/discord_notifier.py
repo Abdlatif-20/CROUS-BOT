@@ -18,8 +18,9 @@ EMBED_COLOR = 0x000091  # DSFR blue, matches the CROUS site
 
 
 class DiscordNotifier:
-    def __init__(self, webhook_url: str, timeout_seconds: int) -> None:
+    def __init__(self, webhook_url: str, timeout_seconds: int, mention_user_ids: tuple[str, ...] = ()) -> None:
         self.webhook_url = webhook_url
+        self.mention_user_ids = mention_user_ids
         self.timeout_seconds = timeout_seconds
         self._last_sent_at = 0.0
 
@@ -69,12 +70,14 @@ class DiscordNotifier:
         }
         if listing.image_url:
             embed["image"] = {"url": listing.image_url}
-        # @everyone pings every member; allowed_mentions is required or Discord renders it as plain text.
+        # Pings only the configured members; allowed_mentions must list them or Discord shows the
+        # mention without notifying.
+        mentions = " ".join(f"<@{user_id}>" for user_id in self.mention_user_ids)
         return self._send(
             {
-                "content": f"@everyone {headline}",
+                "content": f"{mentions} {headline}".strip(),
                 "embeds": [embed],
-                "allowed_mentions": {"parse": ["everyone"]},
+                "allowed_mentions": {"users": list(self.mention_user_ids)},
             }
         )
 
