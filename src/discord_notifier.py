@@ -67,7 +67,14 @@ class DiscordNotifier:
         }
         if listing.image_url:
             embed["image"] = {"url": listing.image_url}
-        self._send({"content": headline, "embeds": [embed]})
+        # @everyone pings every member; allowed_mentions is required or Discord renders it as plain text.
+        self._send(
+            {
+                "content": f"@everyone {headline}",
+                "embeds": [embed],
+                "allowed_mentions": {"parse": ["everyone"]},
+            }
+        )
 
     def send_healthcheck(self) -> None:
         self._send({"content": "✅ CROUS monitor healthcheck: Discord notifications are working."})
