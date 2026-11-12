@@ -13,7 +13,7 @@ from requests import RequestException
 from src.config import Settings
 from src.crous_client import CrousClient
 from src.discord_notifier import DiscordNotifier
-from src.geo_filter import IdfDistanceFilter, ZoneClassifier
+from src.geo_filter import ZONE_OTHER, IdfDistanceFilter, ZoneClassifier
 from src.listing_details import ListingDetails, build_details
 from src.models import Listing
 from src.state_store import create_state_store
@@ -109,7 +109,13 @@ class MonitorService:
         self._remove_unavailable(posted, listings)
 
         for listing in new_listings:
-            headline = self.zones.headline(listing)
+            zone = self.zones.zone(listing)
+            if zone == ZONE_OTHER:
+                # Only Île-de-France and nearby (≤ 1h30 from 42) listings are alerted; the rest are
+                # already marked seen, so they stay silent for good.
+                LOGGER.info("Skipped alert, not Île-de-France: %s", listing.url)
+                continue
+            headline = self.zones.headline(zone)
             details = build_details(listing, self.state_store, self.settings.http_timeout_seconds)
             telegram_ids = self.notifier.send_new_listing(listing, headline, details)
             LOGGER.info("Sent Telegram alert for: %s | %s", listing.url, headline)

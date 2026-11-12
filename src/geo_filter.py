@@ -132,6 +132,8 @@ PARIS_TZ = ZoneInfo("Europe/Paris")
 ZONE_IDF = "Île-de-France"
 ZONE_NEARBY = "Nearby Île-de-France"
 ZONE_OTHER = "Not Île-de-France"
+# Close enough to maybe be nearby, but the transit lookup failed; alerted rather than silently dropped.
+ZONE_UNCHECKED = "Nearby Île-de-France?, transit not checked"
 
 
 def _reference_departure() -> datetime:
@@ -200,6 +202,9 @@ class ZoneClassifier:
 
         coordinates = locate(address, self.state_store, self.timeout_seconds)
         if coordinates is None:
+            if postcode and postcode.group(2) in NEIGHBOUR_DEPARTMENTS:
+                LOGGER.warning("Could not locate listing in a neighbouring department: %s", address)
+                return ZONE_UNCHECKED
             LOGGER.warning("Could not locate listing for zone, tagging as not IDF: %s", address)
             return ZONE_OTHER
         if distance_to_idf_km(*coordinates) == 0:
@@ -209,9 +214,12 @@ class ZoneClassifier:
 
         minutes = transit_minutes_from_42(coordinates, self.state_store, self.timeout_seconds)
         LOGGER.info("Transit from 42 to %s: %s min", address, minutes)
-        if minutes is not None and 0 <= minutes <= NEARBY_MAX_TRANSIT_MINUTES:
+        if minutes is None:
+            return ZONE_UNCHECKED
+        if 0 <= minutes <= NEARBY_MAX_TRANSIT_MINUTES:
             return ZONE_NEARBY
         return ZONE_OTHER
 
-    def headline(self, listing: Listing) -> str:
-        return f"🏠 Nouveau logement CROUS détecté ({self.zone(listing)})"
+    @staticmethod
+    def headline(zone: str) -> str:
+        return f"🏠 Nouveau logement CROUS détecté ({zone})"

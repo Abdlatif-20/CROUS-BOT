@@ -53,6 +53,8 @@ Optional:
 
 - `FILTER_MAX_PRICE_EUR` (only alert when listing price is <= this value)
 - `FILTER_INCLUDE_KEYWORDS` (comma-separated keywords that must match title/city/residence/url)
+Alerts are only sent for Île-de-France listings and nearby ones (≤ 1h30 by public transport from École 42 Paris, weekday 8:00 departure); everything else is recorded silently.
+
 - `FILTER_IDF_MAX_DISTANCE_KM` (only alert for listings in Île-de-France or within N km of its border; addresses outside IDF departments are geocoded with the free api-adresse.data.gouv.fr and cached. Pair with search URL `.../tools/48/search?bounds=1.30_49.34_3.70_48.02` (IDF + ~10 km) so fewer pages are fetched)
 - `HEARTBEAT_ENABLED` (`true|false`, default `false`)
 - `HEARTBEAT_INTERVAL_HOURS` (default `168`)
