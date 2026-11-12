@@ -22,18 +22,42 @@ class TelegramNotifier:
         self.base_endpoint = f"https://api.telegram.org/bot{bot_token}"
         self._last_sent_at = 0.0
 
-    def send_new_listing(self, listing: Listing, headline: str, details: ListingDetails) -> None:
+    def send_new_listing(self, listing: Listing, headline: str, details: ListingDetails) -> list[tuple[str, int]]:
+        """Returns (chat_id, message_id) per chat, kept so the alert can be removed once the listing is gone."""
         message = format_listing_message(listing, headline, details)
         if not listing.image_url:
-            self._send_message(message, parse_mode="HTML")
-            return
+            return self._send_message(message, parse_mode="HTML")
+        sent: list[tuple[str, int]] = []
         for chat_id in self.chat_ids:
             payload = {"chat_id": chat_id, "photo": listing.image_url, "caption": message, "parse_mode": "HTML"}
             response = self._post_with_retry("sendPhoto", payload)
             if response.status_code >= 400:
                 # Telegram fetches the photo itself and rejects URLs it cannot load; the text still matters.
                 LOGGER.warning("Telegram sendPhoto failed status=%s, sending text only", response.status_code)
-                self._send_message(message, chat_id=chat_id, parse_mode="HTML")
+                sent.extend(self._send_message(message, chat_id=chat_id, parse_mode="HTML"))
+                continue
+            message_id = _message_id(response)
+            if message_id is not None:
+                sent.append((chat_id, message_id))
+        return sent
+
+    def remove_listing_message(self, chat_id: str, message_id: int) -> bool:
+        response = self._post_with_retry("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+        if response.status_code < 400:
+            return True
+        # Bots may only delete messages younger than 48h; flag older alerts with a reply instead.
+        response = self._post_with_retry(
+            "sendMessage",
+            {
+                "chat_id": chat_id,
+                "text": "❌ Ce logement n'est plus disponible.",
+                "reply_parameters": {"message_id": message_id, "allow_sending_without_reply": True},
+            },
+        )
+        if response.status_code >= 400:
+            LOGGER.warning("Telegram could not remove or flag message status=%s", response.status_code)
+            return False
+        return True
 
     def send_healthcheck(self) -> None:
         self._send_message("✅ CROUS monitor healthcheck: Telegram notifications are working.")
@@ -73,8 +97,11 @@ class TelegramNotifier:
             return []
         return [item for item in result if isinstance(item, dict)]
 
-    def _send_message(self, message: str, chat_id: str | None = None, parse_mode: str | None = None) -> None:
+    def _send_message(
+        self, message: str, chat_id: str | None = None, parse_mode: str | None = None
+    ) -> list[tuple[str, int]]:
         target_chat_ids = (chat_id,) if chat_id else self.chat_ids
+        sent: list[tuple[str, int]] = []
         for target_chat_id in target_chat_ids:
             payload = {
                 "chat_id": target_chat_id,
@@ -92,7 +119,10 @@ class TelegramNotifier:
                     response.text,
                 )
                 response.raise_for_status()
-
+            message_id = _message_id(response)
+            if message_id is not None:
+                sent.append((target_chat_id, message_id))
+        return sent
 
     def _post_with_retry(self, method: str, payload: dict) -> requests.Response:
         response = self._post_throttled(method, payload)
@@ -110,6 +140,13 @@ class TelegramNotifier:
         response = requests.post(f"{self.base_endpoint}/{method}", json=payload, timeout=self.timeout_seconds)
         self._last_sent_at = time.monotonic()
         return response
+
+
+def _message_id(response: requests.Response) -> int | None:
+    try:
+        return int(response.json()["result"]["message_id"])
+    except (ValueError, KeyError, TypeError):
+        return None
 
 
 def _get_retry_after(response: requests.Response) -> int:

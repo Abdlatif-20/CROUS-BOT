@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -22,7 +23,8 @@ class DiscordNotifier:
         self.timeout_seconds = timeout_seconds
         self._last_sent_at = 0.0
 
-    def send_new_listing(self, listing: Listing, headline: str, details: ListingDetails) -> None:
+    def send_new_listing(self, listing: Listing, headline: str, details: ListingDetails) -> str | None:
+        """Returns the Discord message id, kept so the alert can be deleted once the listing is gone."""
         fields = []
         if listing.price_eur is not None:
             fields.append({"name": "💶 Prix", "value": f"**{listing.price_eur} €** / mois", "inline": True})
@@ -68,7 +70,7 @@ class DiscordNotifier:
         if listing.image_url:
             embed["image"] = {"url": listing.image_url}
         # @everyone pings every member; allowed_mentions is required or Discord renders it as plain text.
-        self._send(
+        return self._send(
             {
                 "content": f"@everyone {headline}",
                 "embeds": [embed],
@@ -79,13 +81,22 @@ class DiscordNotifier:
     def send_healthcheck(self) -> None:
         self._send({"content": "✅ CROUS monitor healthcheck: Discord notifications are working."})
 
-    def _send(self, payload: dict) -> None:
-        response = self._post_throttled(payload)
-        if response.status_code == 429:
-            retry_after = _get_retry_after(response)
-            LOGGER.warning("Discord rate limit hit, retrying in %ss", retry_after)
-            time.sleep(retry_after)
-            response = self._post_throttled(payload)
+    def delete_message(self, message_id: str) -> bool:
+        # Webhooks can delete their own messages at any age; 404 means someone already removed it.
+        response = self._request_with_retry("DELETE", self._message_url(message_id))
+        if response.status_code >= 400 and response.status_code != 404:
+            LOGGER.warning("Discord delete failed status=%s", response.status_code)
+            return False
+        return True
+
+    def _message_url(self, message_id: str) -> str:
+        # Keep any query (e.g. ?thread_id=) after the /messages/<id> path.
+        parts = urlsplit(self.webhook_url)
+        return urlunsplit(parts._replace(path=f"{parts.path.rstrip('/')}/messages/{message_id}"))
+
+    def _send(self, payload: dict) -> str | None:
+        # wait=true makes Discord return the created message (and its id) instead of 204.
+        response = self._request_with_retry("POST", self.webhook_url, payload, params={"wait": "true"})
         if response.status_code >= 400:
             LOGGER.error(
                 "Discord send failed status=%s body=%s",
@@ -93,12 +104,29 @@ class DiscordNotifier:
                 response.text[:300],
             )
             response.raise_for_status()
+        try:
+            return str(response.json()["id"])
+        except (ValueError, KeyError, TypeError):
+            return None
 
-    def _post_throttled(self, payload: dict) -> requests.Response:
+    def _request_with_retry(
+        self, method: str, url: str, payload: dict | None = None, params: dict | None = None
+    ) -> requests.Response:
+        response = self._request_throttled(method, url, payload, params)
+        if response.status_code == 429:
+            retry_after = _get_retry_after(response)
+            LOGGER.warning("Discord rate limit hit, retrying in %ss", retry_after)
+            time.sleep(retry_after)
+            response = self._request_throttled(method, url, payload, params)
+        return response
+
+    def _request_throttled(
+        self, method: str, url: str, payload: dict | None, params: dict | None
+    ) -> requests.Response:
         wait = MIN_SECONDS_BETWEEN_MESSAGES - (time.monotonic() - self._last_sent_at)
         if wait > 0:
             time.sleep(wait)
-        response = requests.post(self.webhook_url, json=payload, timeout=self.timeout_seconds)
+        response = requests.request(method, url, json=payload, params=params, timeout=self.timeout_seconds)
         self._last_sent_at = time.monotonic()
         return response
 

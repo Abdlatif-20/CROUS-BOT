@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import random
 import time
@@ -23,6 +24,14 @@ LOGGER = logging.getLogger(__name__)
 MAX_ALERTS_PER_CYCLE = 40
 # Set once the first cycle on an empty state store has recorded existing listings without alerting.
 INITIAL_SYNC_KEY = "initial_sync_at"
+# JSON {"listings": {url: {"telegram": [[chat_id, message_id]], "discord": id, "missing": n}}, "last_count": n}
+POSTED_ALERTS_KEY = "posted_alerts"
+# CROUS results flicker, so a listing must be absent this many checks in a row (~6 min at 2-min pings)
+# before its alerts are removed.
+MISSING_CHECKS_BEFORE_REMOVAL = 3
+# A fetch returning under half the previous count is treated as a partial page load, not mass removal.
+MIN_FETCH_RATIO = 0.5
+MAX_REMOVALS_PER_CYCLE = 20
 
 
 class MonitorService:
@@ -96,14 +105,65 @@ class MonitorService:
                 LOGGER.info("[DRY-RUN] New listing: %s | %s", listing.title, listing.url)
             return len(filtered_listings), len(new_listings)
 
+        posted = self._load_posted_alerts()
+        self._remove_unavailable(posted, listings)
+
         for listing in new_listings:
             headline = self.zones.headline(listing)
             details = build_details(listing, self.state_store, self.settings.http_timeout_seconds)
-            self.notifier.send_new_listing(listing, headline, details)
+            telegram_ids = self.notifier.send_new_listing(listing, headline, details)
             LOGGER.info("Sent Telegram alert for: %s | %s", listing.url, headline)
-            self._send_discord_listing(listing, headline, details)
+            discord_id = self._send_discord_listing(listing, headline, details)
+            posted["listings"][listing.url] = {"telegram": telegram_ids, "discord": discord_id, "missing": 0}
+            # Saved per alert so a timeout mid-cycle still leaves the sent alerts removable.
+            self._save_posted_alerts(posted)
 
+        self._save_posted_alerts(posted)
         return len(filtered_listings), len(new_listings)
+
+    def _load_posted_alerts(self) -> dict:
+        try:
+            data = json.loads(self.state_store.get_meta(POSTED_ALERTS_KEY) or "{}")
+        except ValueError:
+            data = {}
+        if not isinstance(data.get("listings"), dict):
+            data["listings"] = {}
+        return data
+
+    def _save_posted_alerts(self, posted: dict) -> None:
+        self.state_store.set_meta(POSTED_ALERTS_KEY, json.dumps(posted, separators=(",", ":")))
+
+    def _remove_unavailable(self, posted: dict, listings: list[Listing]) -> None:
+        """Deletes the Telegram/Discord alerts of listings no longer on CROUS (taken or withdrawn).
+        Uses the unfiltered fetch so a filter change does not look like a listing disappearing."""
+        last_count = posted.get("last_count") or 0
+        posted["last_count"] = len(listings)
+        if not listings or len(listings) < last_count * MIN_FETCH_RATIO:
+            LOGGER.warning("Fetched %s listing(s) vs %s last time; skipping removal check", len(listings), last_count)
+            return
+
+        online = {listing.url for listing in listings}
+        removed = 0
+        for url, entry in list(posted["listings"].items()):
+            if url in online:
+                entry["missing"] = 0
+                continue
+            entry["missing"] = entry.get("missing", 0) + 1
+            if entry["missing"] < MISSING_CHECKS_BEFORE_REMOVAL or removed >= MAX_REMOVALS_PER_CYCLE:
+                continue
+            for chat_id, message_id in entry.get("telegram") or []:
+                try:
+                    self.notifier.remove_listing_message(chat_id, message_id)
+                except RequestException:
+                    LOGGER.exception("Telegram removal failed for: %s", url)
+            if self.discord is not None and entry.get("discord"):
+                try:
+                    self.discord.delete_message(entry["discord"])
+                except RequestException:
+                    LOGGER.exception("Discord removal failed for: %s", url)
+            del posted["listings"][url]
+            removed += 1
+            LOGGER.info("Removed alerts for unavailable listing: %s", url)
 
     def _take_new(self, listings: list[Listing]) -> list[Listing]:
         # filter_new marks listings seen, so a big backlog (first run, wider search) is capped per
@@ -236,15 +296,17 @@ class MonitorService:
             LOGGER.debug("Sleeping for %ss before next poll", sleep_seconds)
             time.sleep(sleep_seconds)
 
-    def _send_discord_listing(self, listing: Listing, headline: str, details: ListingDetails) -> None:
+    def _send_discord_listing(self, listing: Listing, headline: str, details: ListingDetails) -> str | None:
         if self.discord is None:
-            return
+            return None
         # Discord is best-effort: the listing is already marked seen and alerted on Telegram.
         try:
-            self.discord.send_new_listing(listing, headline, details)
+            message_id = self.discord.send_new_listing(listing, headline, details)
             LOGGER.info("Sent Discord alert for: %s", listing.url)
+            return message_id
         except Exception:
             LOGGER.exception("Discord alert failed for: %s", listing.url)
+            return None
 
     def _apply_filters(self, listings: Iterable[Listing]) -> list[Listing]:
         output: list[Listing] = []
