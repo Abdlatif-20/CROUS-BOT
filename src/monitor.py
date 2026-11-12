@@ -4,6 +4,7 @@ import logging
 import random
 import time
 from collections import OrderedDict
+from datetime import datetime, timezone
 from typing import Iterable
 
 from requests import RequestException
@@ -20,6 +21,8 @@ from src.telegram_notifier import TelegramNotifier
 LOGGER = logging.getLogger(__name__)
 # A run sends ~2s per alert (Telegram + Discord throttles); 40 keeps a cycle well under Vercel's 300s cap.
 MAX_ALERTS_PER_CYCLE = 40
+# Set once the first cycle on an empty state store has recorded existing listings without alerting.
+INITIAL_SYNC_KEY = "initial_sync_at"
 
 
 class MonitorService:
@@ -62,6 +65,15 @@ class MonitorService:
         skipped_count = len(listings) - len(filtered_listings)
         if skipped_count > 0:
             LOGGER.info("Filtered out %s listing(s) using configured rules", skipped_count)
+
+        if not self.state_store.get_meta(INITIAL_SYNC_KEY):
+            # A brand-new state store has no history; alerting every listing already online would
+            # flood the chats, so the first cycle only records them and later cycles alert.
+            recorded = self.state_store.filter_new(filtered_listings)
+            self.state_store.set_meta(INITIAL_SYNC_KEY, datetime.now(timezone.utc).isoformat())
+            LOGGER.info("Initial sync: recorded %s existing listing(s) without alerting", len(recorded))
+            return len(filtered_listings), 0
+
         new_listings = self._take_new(filtered_listings)
 
         if dry_run:
