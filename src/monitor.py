@@ -54,6 +54,21 @@ class MonitorService:
                 timeout_seconds=settings.http_timeout_seconds,
             )
 
+    def classify_current(self) -> list[dict[str, str]]:
+        """Zone of every listing online now, for checking the headline tags. Sends nothing and
+        marks nothing seen; geocode/transit lookups are cached like real alerts."""
+        results = []
+        for search_url in self.settings.crous_search_urls:
+            for listing in self.client.fetch_listings(search_url):
+                results.append(
+                    {
+                        "url": listing.url,
+                        "address": listing.residence or listing.city or "",
+                        "zone": self.zones.zone(listing),
+                    }
+                )
+        return results
+
     def poll_once(self, dry_run: bool = False) -> tuple[int, int]:
         listings: list[Listing] = []
         for search_url in self.settings.crous_search_urls:

@@ -37,6 +37,13 @@ class handler(BaseHTTPRequestHandler):
         test_telegram = query.get("test", ["0"])[0] in {"1", "true"}
         try:
             service = MonitorService(load_settings())
+            if query.get("classify", ["0"])[0] in {"1", "true"}:
+                listings = service.classify_current()
+                counts: dict[str, int] = {}
+                for item in listings:
+                    counts[item["zone"]] = counts.get(item["zone"], 0) + 1
+                self._reply(200, {"ok": True, "zones": counts, "listings": listings})
+                return
             # A slow run (alert backlog) can outlast the pinger's interval; skip rather than overlap,
             # which would double CROUS requests and trip Discord's webhook rate limit.
             if not service.state_store.acquire_lock("check", LOCK_TTL_SECONDS):
