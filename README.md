@@ -59,14 +59,12 @@ Optional:
 - `ERROR_ALERT_THRESHOLD` (default `3` consecutive failures)
 - `ERROR_ALERT_COOLDOWN_MINUTES` (default `180`)
 - `DISCORD_WEBHOOK_URL` (also send listing alerts to a Discord channel)
-- `DISCORD_MENTION_USER_IDS` (comma-separated Discord user IDs pinged on each listing alert)
 
 ### Discord alerts (optional)
 
 1. In your Discord server, open the channel settings → **Integrations** → **Webhooks** → **New Webhook**.
 2. Name it (e.g. `CROUS Alerts`), click **Copy Webhook URL**.
 3. Put it in `DISCORD_WEBHOOK_URL`.
-4. Optional: to ping members on each alert, enable **User Settings → Advanced → Developer Mode**, right-click each member → **Copy User ID**, and put the IDs in `DISCORD_MENTION_USER_IDS` (comma-separated).
 
 New listings and healthchecks are then sent to both Telegram and Discord. Telegram commands (filters) stay Telegram-only. Discord failures are logged but never block Telegram alerts.
 

@@ -61,7 +61,6 @@ class MonitorService:
             self.discord = DiscordNotifier(
                 webhook_url=settings.discord_webhook_url,
                 timeout_seconds=settings.http_timeout_seconds,
-                mention_user_ids=settings.discord_mention_user_ids,
             )
 
     def classify_current(self) -> list[dict[str, str]]:
