@@ -13,7 +13,8 @@ from src.models import Listing
 class StateStore:
     """Dedup + key/value state. Subclasses provide storage; timing logic lives here."""
 
-    def filter_new(self, listings: list[Listing]) -> list[Listing]:
+    def filter_new(self, listings: list[Listing], limit: int | None = None) -> list[Listing]:
+        """Return unseen listings (at most `limit`, in order) and mark exactly those as seen."""
         raise NotImplementedError
 
     def get_meta(self, key: str) -> str | None:
@@ -98,11 +99,13 @@ class SqliteStateStore(StateStore):
             )
             conn.commit()
 
-    def filter_new(self, listings: list[Listing]) -> list[Listing]:
+    def filter_new(self, listings: list[Listing], limit: int | None = None) -> list[Listing]:
         now = datetime.now(timezone.utc).isoformat()
         new_items: list[Listing] = []
         with closing(sqlite3.connect(self.db_path)) as conn:
             for listing in listings:
+                if limit is not None and len(new_items) >= limit:
+                    break
                 row = conn.execute(
                     "SELECT 1 FROM seen_listings WHERE fingerprint = ?",
                     (listing.fingerprint,),
@@ -171,13 +174,19 @@ class RedisStateStore(StateStore):
                 raise RuntimeError(f"Upstash error: {item['error']}")
         return [item.get("result") for item in results]
 
-    def filter_new(self, listings: list[Listing]) -> list[Listing]:
-        now = datetime.now(timezone.utc).isoformat()
-        commands = [["SADD", self.SEEN_KEY, listing.fingerprint] for listing in listings]
-        commands.append(["SET", f"{self.META_PREFIX}last_poll_at", now])
-        added = self._pipeline(commands)
-        # SADD returns 1 only for fingerprints not already in the set.
-        return [listing for listing, result in zip(listings, added) if result == 1]
+    def filter_new(self, listings: list[Listing], limit: int | None = None) -> list[Listing]:
+        # Upstash bills per command (free tier: 500K/month), so check every fingerprint with one
+        # SMISMEMBER and claim the new ones with one SADD instead of a command per listing.
+        # Callers hold the check lock, so nothing else can claim between the two calls.
+        if not listings:
+            return []
+        flags = self._pipeline([["SMISMEMBER", self.SEEN_KEY, *(item.fingerprint for item in listings)]])[0]
+        new_items = [listing for listing, seen in zip(listings, flags) if not seen]
+        if limit is not None:
+            new_items = new_items[:limit]
+        if new_items:
+            self._pipeline([["SADD", self.SEEN_KEY, *(item.fingerprint for item in new_items)]])
+        return new_items
 
     def acquire_lock(self, name: str, ttl_seconds: int) -> bool:
         # NX + EX: only one caller wins, and a crashed run frees the lock when it expires.
